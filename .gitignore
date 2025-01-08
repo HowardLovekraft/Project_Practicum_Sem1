@@ -2,6 +2,3 @@
 venv/
 venv.env
 
-# "Logs"
-responses.txt
-

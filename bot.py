@@ -4,20 +4,59 @@ from os import getenv
 import telebot
 from telebot.types import ReplyKeyboardMarkup, KeyboardButton
 from telebot.types import Message
-from typing import Optional
+from typing import Final, TypeAlias
+
+
+Username: TypeAlias = str
+UserContextMessage: TypeAlias = str
+
+
+class UserContext:
+    """Хранит контексты пользователей для корректных ответов нейросети."""
+
+    storage: dict[Username, list[str]] = {}
+
+    def _create_context(self, username: str) -> None:
+        """
+        Создает контекст для пользователя.
+        :param username: 'Ник' пользователя.
+        """
+        self.storage[username] = []
+
+    def _get_context(self, username: str) -> UserContextMessage:
+        """Возвращает контекст пользователя."""
+        LAST_MESSAGES_TO_RETURN: Final[int] = -3
+        return " ".join(self.storage[username][LAST_MESSAGES_TO_RETURN:])
+        
+
+    def _add_context(self, username: str, message: Message) -> None:
+        """
+        Добавляет сообщение в контекст пользователя.
+        :param username: 'Ник' пользователя.
+        :param message: Сообщение пользователя.
+        """
+        self.storage[username].append(message.text)
+    
+    def _del_context(self, username: str) -> None:
+        """
+        Удаляет сообщение из контекста пользователя.
+        :param username: 'Ник' пользователя.
+        :param message: Сообщение пользователя.
+        """
+        self.storage[username].clear()
 
 
 # Инициализация API-ключей и бота
 load_dotenv('venv.env')
 
-OPENAI_API_KEY = getenv('OPENAI_API_KEY')
+OPENAI_API_KEY: Final[str] = getenv('OPENAI_API_KEY')
+TELEGRAM_BOT_TOKEN: Final[str] = getenv('TELEGRAM_API_TOKEN')
 client = OpenAI(api_key=OPENAI_API_KEY)
-TELEGRAM_BOT_TOKEN = getenv('TELEGRAM_API_TOKEN')
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 
 ERROR_RESPONSE = "На стороне сервиса произошла ошибка. Воспользуйтесь сервисом позже."
 
-user_context = {}  # Словарь с контекстом
+bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
+user_context = UserContext()
 
 
 def get_gpt_response(user_message: str, system_prompt: str) -> str:
@@ -65,14 +104,14 @@ def handle_text(message: Message) -> None:
     username = message.from_user.username
     chat_id = message.chat.id
 
-    if username not in user_context:
-        user_context[username] = []
+    if username not in user_context.storage:
+        user_context._create_context(username)
 
-    user_context[username].append(message.text)
-    context = " ".join(user_context[username][-3:])  # Храним только последние 3 сообщения
+    user_context._add_context(username, message)
+    context = user_context._get_context(username)
 
     if user_message == "Очистить контекст":
-        user_context[username] = []
+        user_context._del_context(username)
         bot.reply_to(message, "Контекст сброшен.")
 
     else:
@@ -94,11 +133,6 @@ def handle_text(message: Message) -> None:
         
         bot.reply_to(message, "Подождите...")
         response = get_gpt_response(context, system_prompt)
-
-        # Логирование
-        with open('responses.txt', 'a') as responses:
-            responses.write(f'{username}:\n{user_message}\n\nbot:\n{response}\n-\n-\n')
-        print(response)
 
         markup = ReplyKeyboardMarkup(resize_keyboard=True)
         if response != ERROR_RESPONSE: 
